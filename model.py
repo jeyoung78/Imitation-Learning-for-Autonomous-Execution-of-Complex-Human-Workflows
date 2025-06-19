@@ -26,32 +26,38 @@ class AlohaMultiViewDataset(Dataset):
     - coords_list: numpy array of shape (N, seq_len, action_dim)
     - image_pairs: list of (path1, path2) tuples, length N
     """
-    def __init__(self, coords_list, image_pairs, seq_len=20, transform=None):
-        assert len(coords_list) == len(image_pairs), "coords and images lists must match"
-        self.coords_list = coords_list
-        self.image_pairs = image_pairs
-        self.seq_len = seq_len
+    def __init__(self, coords_list, image_pairs, seq_len=20, chunk_len=10, transform=None):
+        assert len(coords_list) == len(image_pairs)
+        self.seq_len   = seq_len
+        self.chunk_len = chunk_len
         self.transform = transform or transforms.Compose([
             transforms.Resize((480, 640)),
             transforms.ToTensor(),
         ])
+        self.samples = []
+        for coords, imgs in zip(coords_list, image_pairs):
+            for start in range(0, seq_len - chunk_len + 1):
+                self.samples.append((coords, imgs, start))
 
     def __len__(self):
-        return len(self.coords_list)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        coords = self.coords_list[idx]  # (seq_len, action_dim)
-        img1_path, img2_path = self.image_pairs[idx]
-        img1 = Image.open(img1_path).convert('RGB')
-        img2 = Image.open(img2_path).convert('RGB')
-        img1 = self.transform(img1)
-        img2 = self.transform(img2)
+        coords, (i1, i2), start = self.samples[idx]
+        # load & transform
+        img1 = self.transform(Image.open(i1).convert('RGB'))
+        img2 = self.transform(Image.open(i2).convert('RGB'))
         imgs = torch.stack([img1, img2], dim=0)  # (2, C, H, W)
-        return imgs, torch.from_numpy(coords).float()
+
+        coords_tensor = torch.from_numpy(coords).float()       # (seq_len, action_dim)
+        end = start + self.chunk_len
+        target_chunk  = coords_tensor[start:end]               # (chunk_len, action_dim)
+
+        return imgs, coords_tensor, target_chunk
 
 
 class RecognitionEncoder(nn.Module):
-    def __init__(self, action_dim=14, hidden_dim=512, num_layers=4,
+    def __init__(self, action_dim=7, hidden_dim=512, num_layers=4,
                  nhead=8, dim_feedforward=2048, max_seq_len=90):
         super().__init__()
         self.cls_token = nn.Parameter(torch.randn(1, 1, hidden_dim))
@@ -81,7 +87,7 @@ class RecognitionEncoder(nn.Module):
 
 
 class MultiViewDecoder(nn.Module):
-    def __init__(self, action_dim=14, hidden_dim=512, num_layers=4,
+    def __init__(self, action_dim=7, hidden_dim=512, num_layers=4,
                  nhead=8, dim_feedforward=2048, img_feat_dim=512,
                  num_views=2, chunk_len=10):
         super().__init__()
@@ -133,7 +139,7 @@ class MultiViewDecoder(nn.Module):
 
 
 class ALOHAMultiViewCVAE(nn.Module):
-    def __init__(self, action_dim=14, hidden_dim=512, num_layers=4,
+    def __init__(self, action_dim=7, hidden_dim=512, num_layers=4,
                  nhead=8, dim_feedforward=2048, max_seq_len=20,
                  num_views=2, chunk_len=10):
         super().__init__()
@@ -170,7 +176,6 @@ class ALOHAMultiViewCVAE(nn.Module):
 
 
 def loss_function(recon_actions, true_actions, mu, logvar, beta=1.0):
-    # Both inputs shape (B, chunk_len, action_dim)
     recon_loss = F.mse_loss(recon_actions, true_actions, reduction='mean')
     kld = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
     return recon_loss + beta * kld, recon_loss, kld
@@ -200,19 +205,21 @@ def train(args):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     for epoch in range(1, args.epochs+1):
+        # (optional) compute β for annealing here…
         model.train()
         total_loss = 0.0
-        for imgs, coords in dataloader:
-            imgs, coords = imgs.to(device), coords.to(device)
-            true = coords[:, -args.chunk_len:]
+        for imgs, coords, target_chunk in dataloader:
+            imgs, coords, target_chunk = imgs.to(device), coords.to(device), target_chunk.to(device)
             optimizer.zero_grad()
+
             pred, mu, logvar = model(imgs, coords)
-            loss, rl, kld = loss_function(pred, true, mu, logvar, beta=args.beta)
+            loss, rl, kld     = loss_function(pred, target_chunk, mu, logvar)
             loss.backward()
             optimizer.step()
+
             total_loss += loss.item()
-        avg = total_loss / len(dataloader)
-        print(f"Epoch {epoch}/{args.epochs} - Loss: {avg:.4f}")
+
+        print(f"Epoch {epoch}/{args.epochs} — Loss: {total_loss/len(dataloader):.4f}")
 
     os.makedirs(os.path.dirname(args.model_out), exist_ok=True)
     torch.save(model.state_dict(), args.model_out)
@@ -265,7 +272,7 @@ if __name__ == '__main__':
     t.add_argument('--model_out',   type=str, default='outputs/aloha_model.pt')
     t.add_argument('--seq_len',     type=int, default=20)
     t.add_argument('--chunk_len',   type=int, default=10)
-    t.add_argument('--action_dim',  type=int, default=14)
+    t.add_argument('--action_dim',  type=int, default=7)
     t.add_argument('--hidden_dim',  type=int, default=512)
     t.add_argument('--layers',      type=int, default=4)
     t.add_argument('--heads',       type=int, default=8)
@@ -283,7 +290,7 @@ if __name__ == '__main__':
     i.add_argument('--model_out',   type=str, required=True)
     i.add_argument('--seq_len',     type=int, default=20)
     i.add_argument('--chunk_len',   type=int, default=10)
-    i.add_argument('--action_dim',  type=int, default=14)
+    i.add_argument('--action_dim',  type=int, default=7)
     i.add_argument('--hidden_dim',  type=int, default=512)
     i.add_argument('--layers',      type=int, default=4)
     i.add_argument('--heads',       type=int, default=8)
