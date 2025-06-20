@@ -29,5 +29,5 @@ def split_video_to_frames(video_path, output_dir, prefix="frame"):
 
 if __name__ == "__main__":
     # 예시: cam0.avi, cam1.avi를 분할
-    split_video_to_frames(r"D:\test_image\cam0.avi", r"D:\test_image\frames_cam0", prefix="cam0")
-    split_video_to_frames(r"D:\test_image\cam1.avi", r"D:\test_image\frames_cam1", prefix="cam1")
+    split_video_to_frames(r"D:\test_image\run50\cam0.avi", r"D:\test_image\run50\frames_cam0", prefix="cam0")
+    split_video_to_frames(r"D:\test_image\run50\cam1.avi", r"D:\test_image\run50\frames_cam1", prefix="cam1")

@@ -1,6 +1,8 @@
 import pandas as pd
 import os
 
+BASE_DIR = r"D:\test_image\run50"
+
 # 1) 파일 읽기
 robot = pd.read_csv('robot_positions.csv', parse_dates=['timestamp_ms'])
 cam0  = pd.read_csv('cam0_timestamps.csv',  parse_dates=['timestamp'])
@@ -27,7 +29,7 @@ df = robot.join(matched0[['cam0_frame','cam0_ts']]).join(matched1[['cam1_frame',
 def make_path(cam_idx, frame_no):
     # 4자리 0패딩, 확장자 .png
     fname = f"cam{cam_idx}_{int(frame_no):04d}.png"
-    return os.path.join("D:/test_image", f"frames_cam{cam_idx}", fname)
+    return os.path.join(BASE_DIR, f"frames_cam{cam_idx}", fname)
 
 df['cam0_path'] = df['cam0_frame'].apply(lambda i: make_path(0, i))
 df['cam1_path'] = df['cam1_frame'].apply(lambda i: make_path(1, i))

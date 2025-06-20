@@ -111,12 +111,12 @@ class RobotServer:
 
 
 # — 카메라 녹화 함수 (640×408 리사이즈 적용) —
-DURATION = 65
+DURATION = 60
 TARGET_FPS = 8.0
 EXPECTED_FRAMES = int(DURATION * TARGET_FPS)
 TARGET_W, TARGET_H = 640, 408
 
-def record_camera(idx, cam, video_dir=r"D:\test_image"):
+def record_camera(idx, cam, video_dir=r"D:\test_image\run50"):
     os.makedirs(video_dir, exist_ok=True)
     converter = pylon.ImageFormatConverter()
     converter.OutputPixelFormat = pylon.PixelType_BGR8packed
