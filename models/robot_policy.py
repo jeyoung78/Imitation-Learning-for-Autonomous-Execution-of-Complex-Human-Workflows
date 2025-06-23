@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.nn import MSELoss
 
 # ── allow import of your detr/models folder ─────────────────────────────────
-sys.path.append(os.path.abspath(r'C:\Users\jupar\imitationLearning'))  # ← parent of models/
+sys.path.append(os.path.abspath(r'/home/jhkim/Downloads/imit/Imitation-Learning-for-Autonomous-Execution-of-Complex-Human-Workflows'))  # ← parent of models/
 from models.detr_vae import build as Policy
 
 import inspect
@@ -150,7 +150,54 @@ def main(args):
 
         print(f'Inference complete → {args.out_dir}')
 
+'''
+def main(args):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # swap in our CSV dataset
+    ds = RobotCSV_Dataset(args.data_dir)
+    dl = DataLoader(ds,
+                    batch_size=args.batch_size,
+                    shuffle=(args.mode=='train'),
+                    drop_last=True)
+
+    model = Policy(
+        state_dim    = args.state_dim,
+        camera_names = args.camera_names
+    ).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+    if args.mode == 'train':
+        os.makedirs(args.ckpt_dir, exist_ok=True)
+        for ep in range(args.epochs):
+            model.train()
+            total_loss = 0.0
+            for imgs, states in dl:
+                imgs, states = imgs.to(device), states.to(device)
+                opt.zero_grad()
+                recon, mu, lv = model(imgs, states)
+                loss = vae_loss(recon, states, mu, lv, args.kl_weight)
+                loss.backward()
+                opt.step()
+                total_loss += loss.item()
+            avg = total_loss / len(dl)
+            print(f'Epoch {ep+1}/{args.epochs} — loss {avg:.4f}')
+            torch.save(model.state_dict(),
+                       os.path.join(args.ckpt_dir, f'ckpt{ep+1:03d}.pth'))
+
+    else:  # infer
+        ckpt = torch.load(args.ckpt_path, map_location=device)
+        model.load_state_dict(ckpt)
+        model.eval()
+        os.makedirs(args.out_dir, exist_ok=True)
+        with torch.no_grad():
+            for i,(imgs,_) in enumerate(dl):
+                imgs = imgs.to(device)
+                pred,_,_ = model(imgs)
+                torch.save(pred.cpu(),
+                           os.path.join(args.out_dir, f'pred_{i:03d}.pt'))
+        print(f'Inference complete → {args.out_dir}')
+'''
 if __name__ == '__main__':
     p = argparse.ArgumentParser()
     p.add_argument('mode', choices=['train','infer'],
