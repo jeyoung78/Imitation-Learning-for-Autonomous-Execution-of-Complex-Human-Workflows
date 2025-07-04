@@ -1,0 +1,33 @@
+Metadata-Version: 2.4
+Name: gym-custom
+Version: 1.1.2
+Summary: Custom environments based on OpenAI Gym, a toolkit for developing and comparing your reinforcement learning agents.
+Home-page: https://github.com/jigangkim/gym-custom
+Author: Jigang Kim
+Author-email: jgkim2020@snu.ac.kr
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.5
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Requires-Python: >=3.5
+Requires-Dist: scipy
+Requires-Dist: numpy>=1.10.4
+Requires-Dist: pyglet<=1.5.0,>=1.4.0
+Requires-Dist: cloudpickle<1.4.0,>=1.2.0
+Requires-Dist: enum34~=1.1.6; python_version < "3.4"
+Requires-Dist: inputimeout
+Provides-Extra: real
+Requires-Dist: math3d; extra == "real"
+Requires-Dist: six; extra == "real"
+Provides-Extra: all
+Requires-Dist: math3d; extra == "all"
+Requires-Dist: six; extra == "all"
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
