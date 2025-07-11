@@ -1,4 +1,3 @@
-
 import sys, pathlib
 # make the repo root importable
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -16,14 +15,14 @@ import tqdm
 SEED = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print(DEVICE)
-DATA_PATH           = r"C:\Users\jupar\Downloads\vqbet_datasets_for_release\vqbet_datasets_for_release\ur3"
-SAVE_PATH           = "./checkpoints/ur3_vqvae"
+DATA_PATH           = "./data"
+SAVE_PATH           = "./checkpoints_pybullet/vqvae"
 BATCH_SIZE          = 2048
-EPOCHS              = 150
+EPOCHS              = 300
 CHECKPOINT_INTERVAL = 10
 
 ACTION_WINDOW_SIZE = 1
-ACT_DIM            = 2
+ACT_DIM            = 14
 N_LATENT_DIMS      = 512
 VQVAE_N_EMBED      = 16
 VQVAE_GROUPS       = 2
@@ -35,23 +34,28 @@ def seed_everything(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+
+
 class UR3Dataset(Dataset):
     def __init__(self, data_dir: str):
         acts = np.load(Path(data_dir) / "data_act.npy")    # (N, T, D)
         _, _, D = acts.shape
-        ACTION_WINDOW_SIZE = 1
+        # ACTION_WINDOW_SIZE = 1
         ACT_DIM = D
         mask = np.load(Path(data_dir) / "data_msk.npy")    # (N, T, 1) or (N, T)
         mask = mask.squeeze(-1) if mask.ndim == 3 else mask
         mask = (mask > 0).astype(bool)
-        N, T      = mask.shape
+        N, T, _      = acts.shape
+        #print(D)
         windows   = []
         for i in range(N):
-            traj   = acts[i]         # (T, D)
-            t_mask = mask[i]         # (T,)
+            # print(N)
+            traj   = acts[i]    # (T, D)
+            # print(traj)
             for t in range(T - ACTION_WINDOW_SIZE + 1):
-                if t_mask[t : t+ACTION_WINDOW_SIZE].all():
-                    windows.append(traj[t : t+ACTION_WINDOW_SIZE].astype(np.float32))
+                windows.append(traj[t : t+ACTION_WINDOW_SIZE].astype(np.float32))
+                # print(traj[t : t+ACTION_WINDOW_SIZE])
+                # print(T)
         if not windows:
             raise RuntimeError(f"No valid windows in {data_dir}")
         self.windows = windows
@@ -82,6 +86,7 @@ def train_loop(
         pbar = tqdm.tqdm(loader, desc=f"Epoch {epoch}/{epochs}", unit="batch")
         first = True
         for batch in pbar:
+            # print(batch)
             batch = batch.to(device)
             enc, vq, codes, recon, dec_out = vqvae.vqvae_update(batch)
             if first:
@@ -97,9 +102,10 @@ def train_loop(
 
         # compute averages
         iters = len(loader)
-        avg_enc   = sum_enc   / iters
-        avg_vq    = sum_vq    / iters
-        avg_recon = sum_recon / iters
+        if iters > 0:   
+            avg_enc   = sum_enc   / iters
+            avg_vq    = sum_vq    / iters
+            avg_recon = sum_recon / iters
 
         # checkpoint
         if epoch % checkpoint_interval == 0 or epoch == epochs:
