@@ -1,3 +1,4 @@
+
 import sys, pathlib
 # make the repo root importable
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -20,7 +21,7 @@ vqvae = VqVae(
     eval=True,
     device=DEVICE
 )
-vqvae.load_state_dict(torch.load("./checkpoints_pybullet/vqvae/vqvae_epoch300.pt", map_location=DEVICE))
+vqvae.load_state_dict(torch.load("./checkpoints_pybullet/block_touch/vqvae/vqvae_epoch300.pt", map_location=DEVICE))
 # vqvae.eval()
 
 # 2. Re-build GPT config and BehaviorTransformer
@@ -41,7 +42,7 @@ agent = BehaviorTransformer(
 ).to(DEVICE)
 
 # 3. Load your trained Transformer checkpoint
-checkpoint = torch.load("./checkpoints_pybullet/transformer/agent_epoch1500.pt", map_location=DEVICE)
+checkpoint = torch.load("./checkpoints_pybullet/block_touch/transformer/agent_epoch2000.pt", map_location=DEVICE)
 agent.load_state_dict(checkpoint)
 agent.eval()
 
@@ -103,7 +104,7 @@ class SimpleManipulationEnv:
         y = np.random.uniform(-0.2, 0.2)
         self.cube = p.loadURDF(
             "cube_small.urdf",
-            [0.1, 0.8, 0.1],
+            [0.3, -0.8, 0.1],
             p.getQuaternionFromEuler([0, 0, 0]),
             globalScaling=1.8
         )
@@ -152,10 +153,10 @@ def run_fixed_action(steps=500, gui=True):
         obs = obs.astype(np.float32)  
         action_14d = get_acts(obs)
         action = np.asarray(action_14d).ravel().tolist()
-        print(action)
+        print(i)
         # if GUI mode, slow it down to real time
         if gui:
-            time.sleep(1.0/240.0)
+            time.sleep(1.0/120.0)
 
     env.close()
 
@@ -163,4 +164,3 @@ def run_fixed_action(steps=500, gui=True):
 if __name__ == "__main__":
     # Example: all-zeros action
     run_fixed_action()
-

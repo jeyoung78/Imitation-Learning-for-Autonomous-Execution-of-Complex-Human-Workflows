@@ -1,4 +1,4 @@
-
+"""
 import pybullet as p
 import pybullet_data
 import argparse
@@ -184,159 +184,271 @@ if __name__ == "__main__":
     args = parser.parse_args()
     collect_contact_demo(args)
 """
-
+import os
+import argparse
+import time
+import numpy as np
 import pybullet as p
 import pybullet_data
-import numpy as np
-import time
-import os
 
-# Utility: find finger joints of the gripper
-def find_finger_joints(robot_id):
-    return [j for j in range(p.getNumJoints(robot_id))
-            if 'finger' in p.getJointInfo(robot_id, j)[1].decode().lower()]
 
-class GraspRecorder:
-    OPEN_POS = 0.10       # gripper open position
-    CLOSE_POS = 0.0       # gripper closed
-    OBJECT_SCALE = 1.8    # cube scale
-    STEP_DELAY = 1/240.
+class ButtonPressEnv:
+    """
+    Environment: KUKA IIWA presses a sequence of moving buttons on a table.
 
-    def __init__(self, save_dir='data', num_episodes=10, gui=True):
-        self.save_dir = save_dir
-        self.num_episodes = num_episodes
+    Enhanced with button characteristics (weight, size, color) that determine press order.
+
+    - N buttons are placed and parameterized each episode with fixed or per-button weight/size/color.
+    - Buttons are sorted ascending by size for pressing.
+    - Press sequence for each button:
+        1. Approach above the current button position.
+        2. Lower to press.
+        3. Retract above.
+
+    Observations per step include:
+      - Joint positions (M)
+      - Joint velocities (M)
+      - End-effector (EE) position (3)
+      - All buttons: position (3), weight (1), size (1), color RGB (3), sorted index (1)
+      - Step index within episode (1)
+    Actions:
+      - Target joint positions (M)
+    """
+    def __init__(self,
+                 gui=False,
+                 num_buttons=5,
+                 approach_height=0.2,
+                 press_height=0.05,
+                 dt=1/240.,
+                 fixed_weight=1.0,
+                 fixed_size=1.0,
+                 fixed_color=None):
         self.gui = gui
-        self._init_pybullet()
+        self.num_buttons = num_buttons
+        self.approach_height = approach_height
+        self.press_height = press_height
+        self.dt = dt
+        # fixed_weight/fixed_size: float or list length num_buttons
+        self.fixed_weight = fixed_weight
+        self.fixed_size = fixed_size
+        # fixed_color: None, 3-length list, or list of per-button lists
+        self.fixed_color = fixed_color
 
-    def _init_pybullet(self):
-        if self.gui:
-            p.connect(p.GUI)
-            p.resetDebugVisualizerCamera(1.2, 45, -30, [0.5, 0, 0.2])
-        else:
-            p.connect(p.DIRECT)
+        mode = p.GUI if gui else p.DIRECT
+        p.connect(mode)
+        if gui:
+            p.resetDebugVisualizerCamera(
+                cameraDistance=1.2,
+                cameraYaw=45,
+                cameraPitch=-30,
+                cameraTargetPosition=[0.5, 0, 0.3]
+            )
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        p.setGravity(0, 0, -9.81)
 
-    def _load_robot(self):
-        p.loadURDF("plane.urdf")
-        self.robot = p.loadSDF(pybullet_data.getDataPath() + "/kuka_iiwa/kuka_with_gripper2.sdf")[0]
-        self.num_joints = p.getNumJoints(self.robot)
-        self.finger_joints = find_finger_joints(self.robot)
-        for j in range(self.num_joints):
-            p.setJointMotorControl2(self.robot, j, p.VELOCITY_CONTROL, force=0)
-
-    def control_gripper(self, pos, force=250):
-        for j in self.finger_joints:
-            p.setJointMotorControl2(self.robot, j, p.POSITION_CONTROL,
-                                     targetPosition=pos, force=force)
-
-    def reset_episode(self):
+    def reset(self):
         p.resetSimulation()
         p.setGravity(0, 0, -9.81)
-        self._load_robot()
-        # randomize cube pose
-        x = np.random.uniform(0.4, 0.6)
-        y = np.random.uniform(-0.2, 0.2)
-        yaw = np.random.uniform(0, 2 * np.pi)
-        pos = [x, y, 0.1]
-        quat = p.getQuaternionFromEuler([0, 0, yaw])
-        self.cube = p.loadURDF(
-            "cube_small.urdf", pos, quat,
-            globalScaling=self.OBJECT_SCALE
-        )
-        # initial open
-        self.control_gripper(self.OPEN_POS)
-        # initialize storage
-        obs_list, act_list = [], []
-        contact_counts, contact_forces = [], []
-        # record initial obs/action
-        obs_list.append(self.get_obs())
-        act_list.append([0.0] * self.num_joints)
-        return obs_list, act_list, contact_counts, contact_forces, pos
+        p.loadURDF('plane.urdf')
+        sdf = p.loadSDF(os.path.join(pybullet_data.getDataPath(),
+                                     'kuka_iiwa', 'kuka_with_gripper2.sdf'))
+        self.robot = sdf[0]
 
-    def get_obs(self):
-        # joint states
-        js = p.getJointStates(self.robot, list(range(self.num_joints)))
-        pos = [s[0] for s in js]
-        vel = [s[1] for s in js]
-        # cube pose
-        cube_p, cube_o = p.getBasePositionAndOrientation(self.cube)
-        return np.array(pos + vel + list(cube_p) + list(cube_o), dtype=np.float32)
+        # identify arm and finger joints
+        self.arm_joints, self.finger_joints = [], []
+        for j in range(p.getNumJoints(self.robot)):
+            info = p.getJointInfo(self.robot, j)
+            name = info[1].decode().lower()
+            if info[2] == p.JOINT_REVOLUTE:
+                if 'finger' in name:
+                    self.finger_joints.append(j)
+                else:
+                    self.arm_joints.append(j)
+        self.ee_link = self.arm_joints[-1]
 
-    def step(self, action):
-        # apply arm + gripper actions
-        for j, tgt in enumerate(action):
-            p.setJointMotorControl2(self.robot, j, p.POSITION_CONTROL,
-                                     targetPosition=tgt, force=200)
+        # reset joint states
+        for j in self.arm_joints + self.finger_joints:
+            p.resetJointState(self.robot, j, 0.0)
+            p.setJointMotorControl2(
+                self.robot, j,
+                p.POSITION_CONTROL,
+                targetPosition=0.0,
+                force=200
+            )
+
+        # spawn and parameterize buttons
+        self.buttons = []
+        for i in range(self.num_buttons):
+            x = np.random.uniform(0.4, 0.8)
+            y = np.random.uniform(-0.4, 0.4)
+            z = 0.02
+            weight = self.fixed_weight[i] if isinstance(self.fixed_weight, (list, tuple)) else self.fixed_weight
+            size   = self.fixed_size[i]   if isinstance(self.fixed_size,   (list, tuple)) else self.fixed_size
+            if self.fixed_color is None:
+                color = np.random.rand(3).tolist()
+            elif isinstance(self.fixed_color[0], (list, tuple)):
+                color = list(self.fixed_color[i])
+            else:
+                color = list(self.fixed_color)
+
+            uid = p.loadURDF('sphere_small.urdf', [x, y, z], globalScaling=size)
+            p.changeDynamics(uid, -1, mass=weight)
+            p.changeVisualShape(uid, -1, rgbaColor=color + [1.0])
+            self.buttons.append({'uid': uid,
+                                 'weight': weight,
+                                 'size': size,
+                                 'color': color})
+
+        # sort by size
+        self.buttons.sort(key=lambda b: b['size'])
         p.stepSimulation()
-        if self.gui:
-            time.sleep(self.STEP_DELAY)
-        return self.get_obs()
 
-    def attach_constraint(self):
-        wrist = self.num_joints - 1
-        p.createConstraint(self.robot, wrist,
-                           self.cube, -1,
-                           p.JOINT_FIXED, [0,0,0], [0,0,0], [0,0,0])
+        # return full initial observation (step_idx=0)
+        obs0 = self._get_obs(step_idx=0)
+        return obs0
 
-    def run(self):
-        all_obs, all_act = [], []
-        all_counts, all_forces = [], []
-        for ep in range(self.num_episodes):
-            obs_list, act_list, counts, forces, cube_pos = self.reset_episode()
-            # phases: approach, descend, close, lift
-            phases = []
-            # 1) approach
-            above = [cube_pos[0], cube_pos[1], cube_pos[2] + 0.3]
-            j_above = p.calculateInverseKinematics(self.robot, self.num_joints-1, above)
-            phases.append((j_above, self.OPEN_POS, 100))
-            # 2) descend
-            below = [cube_pos[0], cube_pos[1], cube_pos[2] + 0.05]
-            j_below = p.calculateInverseKinematics(self.robot, self.num_joints-1, below)
-            phases.append((j_below, self.OPEN_POS, 120))
-            # 3) close & attach
-            phases.append((j_below, self.CLOSE_POS, 60, True))
-            # 4) lift
-            lift = [cube_pos[0], cube_pos[1], cube_pos[2] + 0.5]
-            j_lift = p.calculateInverseKinematics(self.robot, self.num_joints-1, lift)
-            phases.append((j_lift, self.CLOSE_POS, 140))
-
+    def step(self, steps_per_phase=50):
+        phases = ['approach', 'press', 'retract']
+        all_obs, all_act, all_cc, all_cf = [], [], [], []
+        idx = 0
+        for sorted_idx, btn in enumerate(self.buttons):
             for phase in phases:
-                joints, grip, steps = phase[0], phase[1], phase[2]
-                attach = len(phase) == 4 and phase[3]
-                for _ in range(steps):
-                    # build full action vector
-                    action = list(joints) + [0.0] * (self.num_joints - len(joints))
-                    # override finger joints
+                duration = steps_per_phase if phase != 'press' else steps_per_phase // 2
+                for s in range(duration):
+                    bp = p.getBasePositionAndOrientation(btn['uid'])[0]
+                    target_z = self.press_height if phase == 'press' else self.approach_height
+                    target = [bp[0], bp[1], target_z]
+                    ee = p.getLinkState(self.robot, self.ee_link)[4]
+                    alpha = float(s + 1) / duration
+                    waypoint = [ee[i] * (1 - alpha) + target[i] * alpha for i in range(3)]
+
+                    jt = p.calculateInverseKinematics(self.robot, self.ee_link, waypoint)
+                    action = list(jt[:len(self.arm_joints)])
+                    #print(len(action))
+                    for j_idx, j in enumerate(self.arm_joints):
+                        p.setJointMotorControl2(
+                            self.robot, j,
+                            p.POSITION_CONTROL,
+                            targetPosition=action[j_idx],
+                            force=200)
                     for j in self.finger_joints:
-                        action[j] = grip
-                    # step
-                    obs = self.step(action)
-                    act_list.append(action.copy())
-                    obs_list.append(obs)
-                    # contact logging
-                    contacts = p.getContactPoints(self.robot, self.cube)
-                    counts.append(len(contacts))
-                    forces.append(sum(c[9] for c in contacts))
-                if attach:
-                    self.attach_constraint()
-            print(obs_list)
-            print(act_list)
-            all_obs.append(np.stack(obs_list, axis=0))
-            all_act.append(np.stack(act_list, axis=0))
-            all_counts.append(np.array(counts, dtype=int))
-            all_forces.append(np.array(forces, dtype=float))
-            print(f"Episode {ep+1}/{self.num_episodes} recorded.")
+                        p.setJointMotorControl2(
+                            self.robot, j,
+                            p.POSITION_CONTROL,
+                            targetPosition=0.04,
+                            force=50)
 
-        # save
-        os.makedirs(self.save_dir, exist_ok=True)
-        np.save(os.path.join(self.save_dir, "data_obs.npy"), np.stack(all_obs, axis=0))
-        np.save(os.path.join(self.save_dir, "data_act.npy"), np.stack(all_act, axis=0))
-        np.save(os.path.join(self.save_dir, "data_contact_counts.npy"), np.stack(all_counts, axis=0))
-        np.save(os.path.join(self.save_dir, "data_contact_forces.npy"), np.stack(all_forces, axis=0))
-        print(f"Saved {self.num_episodes} episodes to '{self.save_dir}'")
+                    p.stepSimulation()
+                    if self.gui:
+                        time.sleep(self.dt)
 
-if __name__ == "__main__":
-    recorder = GraspRecorder(save_dir='data', num_episodes=50, gui=True)
-    recorder.run()
-"""
+                    obs = self._get_obs(step_idx=idx)
+                    all_obs.append(obs)
+                    all_act.append(action)
+                    all_cc.append(0); all_cf.append(0.0)
+                    idx += 1/125
+
+        return (np.stack(all_obs, axis=0),
+                np.stack(all_act, axis=0),
+                np.array(all_cc, dtype=int),
+                np.array(all_cf, dtype=float))
+
+    def _get_obs(self, step_idx):
+        # robot state
+        jp, jv = [], []
+        for j in self.arm_joints:
+            pos, vel = p.getJointState(self.robot, j)[:2]
+            jp.append(pos); jv.append(vel)
+        ee_pos = p.getLinkState(self.robot, self.ee_link)[4]
+
+        # collect all buttons
+        btn_feats = []
+        for sorted_idx, btn in enumerate(self.buttons):
+            bp = p.getBasePositionAndOrientation(btn['uid'])[0]
+            w, sz, col = btn['weight'], btn['size'], btn['color']
+            btn_feats += [bp[0], bp[1], bp[2]]
+
+        # assemble full obs
+        if step_idx <= 1:
+            ball_idx = 0
+        else:
+            ball_idx = 1
+
+        obs_vec = jp + jv + list(ee_pos) + btn_feats + [step_idx] + [ball_idx]
+        return np.array(obs_vec, dtype=np.float32)
+    
+
+    def close(self):
+        p.disconnect()
+
+def collect_buttonpress_data(args):
+    # --- per‐button parameters must all have length == args.num_buttons
+    weights = [1.0, 2.0]       # len=3
+    sizes   = [1.0, 2.0]       # len=3
+    colors  = [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0]
+#        [0.0, 0.0, 1.0],
+    ]
+    assert args.num_buttons == len(weights) == len(sizes) == len(colors), \
+           "num_buttons must equal len(weights/sizes/colors)"
+
+    env = ButtonPressEnv(
+        gui=args.gui,
+        num_buttons=args.num_buttons,
+        approach_height=args.approach_height,
+        press_height=args.press_height,
+        dt=args.dt,
+        fixed_weight=weights,
+        fixed_size=sizes,
+        fixed_color=colors
+    )
+
+    all_obs, all_act, all_cc, all_cf = [], [], [], []
+    for ep in range(args.num_episodes):
+        print(f"Episode {ep+1}/{args.num_episodes}")
+
+        # 1) reset → returns obs_0 containing all buttons
+        obs0 = env.reset()
+
+        
+
+        # 2) collect the rest of the trajectory
+        obs_seq, act_seq, cc_seq, cf_seq = env.step(steps_per_phase=args.steps_per_phase)
+
+        #if obs0.shape[0] == obs_seq.shape[1] - 1:
+        #   obs0 = np.concatenate([obs0, [0]], axis=0)
+            
+
+        # 3) prepend initial obs if you want a continuous trace
+        # obs_full = np.vstack([obs0[np.newaxis], obs_seq])
+
+        all_obs.append(obs_seq)
+        all_act.append(act_seq)
+        all_cc.append(cc_seq)
+        all_cf.append(cf_seq)
+        # print(obs_full[-1])
+
+    env.close()
+
+    os.makedirs(args.save_dir, exist_ok=True)
+    np.save(os.path.join(args.save_dir, 'data_obs.npy'), np.stack(all_obs, axis=0))
+    np.save(os.path.join(args.save_dir, 'data_act.npy'), np.stack(all_act, axis=0))
+    np.save(os.path.join(args.save_dir, 'data_contact_counts.npy'),
+            np.stack(all_cc, axis=0))
+    np.save(os.path.join(args.save_dir, 'data_contact_forces.npy'),
+            np.stack(all_cf, axis=0))
+
+    print(f"Saved {len(all_obs)} button-press episodes to '{args.save_dir}'")
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Collect weighted button-press data')
+    parser.add_argument('--save_dir', type=str, default='data/button')
+    parser.add_argument('--gui', action='store_true')
+    parser.add_argument('--dt', type=float, default=1/240.)
+    parser.add_argument('--num_episodes', type=int, default=1000)
+    parser.add_argument('--num_buttons', type=int, default=2)
+    parser.add_argument('--steps_per_phase', type=int, default=50)
+    parser.add_argument('--approach_height', type=float, default=0.5)
+    parser.add_argument('--press_height', type=float, default=0.05)
+    args = parser.parse_args()
+    collect_buttonpress_data(args)

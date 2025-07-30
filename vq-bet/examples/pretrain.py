@@ -15,16 +15,16 @@ import tqdm
 SEED = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print(DEVICE)
-DATA_PATH           = "./data"
-SAVE_PATH           = "./checkpoints_pybullet/vqvae"
-BATCH_SIZE          = 2048
-EPOCHS              = 300
+DATA_PATH           = "./data/button"
+SAVE_PATH           = "./checkpoints_pybullet/buttons/more_more_data/vqvae"
+BATCH_SIZE          = 4096
+EPOCHS              = 400
 CHECKPOINT_INTERVAL = 10
 
 ACTION_WINDOW_SIZE = 1
-ACT_DIM            = 14
+ACT_DIM            = 10
 N_LATENT_DIMS      = 512
-VQVAE_N_EMBED      = 16
+VQVAE_N_EMBED      = 32
 VQVAE_GROUPS       = 2
 
 # ────────────────── Helpers ───────────────────

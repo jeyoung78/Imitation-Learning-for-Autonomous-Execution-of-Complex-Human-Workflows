@@ -22,31 +22,36 @@ SEED = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Data paths
-DATA_DIR = "./data"
-VQVAE_CHECKPOINT = "./checkpoints_pybullet/vqvae/vqvae_epoch150.pt"
-SAVE_DIR = "./checkpoints_pybullet/transformer"
+DATA_DIR = "./data/button"
+VQVAE_CHECKPOINT = "./checkpoints_pybullet/buttons/more_more_data/vqvae/vqvae_epoch200.pt"
+SAVE_DIR = "./checkpoints_pybullet/buttons/more_more_data/transformer"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # VQ-VAE parameters (must match pretraining)
 ACTION_WINDOW_SIZE = 1           # single-step coding
-ACT_DIM            = 14          # ← match your data_act.npy’s last dim :contentReference[oaicite:0]{index=0}
+ACT_DIM            = 10          # ← match your data_act.npy’s last dim :contentReference[oaicite:0]{index=0}
 # BehaviorTransformer context sizes
 N_OBS_WINDOW       = 1          # e.g. condition on the last 10 observations
 N_ACT_WINDOW       = 1          # predict 1 step ahead
-OBS_DIM            = 36          # ← match your data_obs.npy’s last dim :contentReference[oaicite:1]{index=1}
+OBS_DIM            = 31          # ← match your data_obs.npy’s last dim :contentReference[oaicite:1]{index=1}
 
 # Transformer & training hyperparameters
-TRANSFORMER_LR = 1e-4
-BATCH_SIZE     = 2048             # adjust to your dataset size
-EPOCHS         = 5000
+TRANSFORMER_LR = 3e-4
+BATCH_SIZE     = 4096             # adjust to your dataset size
+EPOCHS         = 2000
 GRAD_CLIP      = 1.0
 
 # VQ-BeT model hyperparameters (you can leave these)
 N_LATENT_DIMS  = 512
-VQVAE_N_EMBED  = 16
+# VQVAE_N_EMBED  = 16
+VQVAE_N_EMBED  = 32
 VQVAE_GROUPS   = 2
-GPT_EMB_DIM    = 128
-GPT_N_LAYER    = 6
+# smaller model size
+# GPT_EMB_DIM    = 128
+# GPT_N_LAYER    = 6
+# GPT_N_HEAD     = 8
+GPT_EMB_DIM    = 256
+GPT_N_LAYER    = 12
 GPT_N_HEAD     = 8
 GPT_BLOCK_SIZE = N_OBS_WINDOW
 
@@ -134,59 +139,7 @@ class UR3SequenceDataset(Dataset):
             torch.from_numpy(a).float().clone()
         )
 
-'''
-# ─────────────── Dataset ───────────────
-class UR3SequenceDataset(Dataset):
-    """
-    Returns sliding windows of observations and actions for UR3.
-    Handles per-episode or flat formats for data_obs.npy, data_act.npy, data_msk.npy.
-    """
-    def __init__(self, root_dir:str):
-        obs_raw = np.load(Path(root_dir)/"data_obs.npy")
-        act_raw = np.load(Path(root_dir)/"data_act.npy")
-        msk_raw = np.load(Path(root_dir)/"data_msk.npy").astype(bool)
 
-        # Broadcast single trajectory to episode-first format
-        if obs_raw.ndim == 2:
-            obs_raw = obs_raw[np.newaxis, ...]
-            act_raw = act_raw[np.newaxis, ...]
-            msk_raw = msk_raw[np.newaxis, ...]
-        E, T, O = obs_raw.shape
-        _, T_act, A = act_raw.shape
-        assert T == T_act, "obs and act sequence lengths must match"
-
-        global OBS_DIM
-        OBS_DIM = O
-        self.samples = []
-
-        for e in range(E):
-            obs_seq_e = obs_raw[e]
-            act_seq_e = act_raw[e]
-            mask_e    = msk_raw[e]
-            for t in range(T - (N_OBS_WINDOW + N_ACT_WINDOW) + 1):
-            # for t in range(T - (max(N_OBS_WINDOW, N_ACT_WINDOW)) + 1):
-                idx_obs = slice(t, t + N_OBS_WINDOW)
-                idx_act = slice(t + N_OBS_WINDOW, t + N_OBS_WINDOW + N_ACT_WINDOW)
-                if mask_e[idx_obs].all() and mask_e[idx_act].all():
-                    print(obs_seq_e[idx_obs])
-                    self.samples.append((
-                        obs_seq_e[idx_obs].astype(np.float32),
-                        act_seq_e[idx_act].astype(np.float32)
-                    ))
-        if not self.samples:
-            raise RuntimeError(f"No valid training windows found in {root_dir}")
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        obs_seq, act_seq = self.samples[idx]
-        # .clone() forces a fresh Tensor allocation (resizable storage)
-        return (
-            torch.from_numpy(obs_seq).float().clone(),
-            torch.from_numpy(act_seq).float().clone()
-        )
-'''
 # ─────────────── Model setup ───────────────
 from vqvae.vqvae import VqVae
 from vq_behavior_transformer.gpt import GPT, GPTConfig
@@ -223,7 +176,7 @@ agent = BehaviorTransformer(
     goal_dim=0,
     gpt_model=gpt,
     vqvae_model=vqvae,
-    offset_loss_multiplier=1e3,
+    offset_loss_multiplier=0.5,
     obs_window_size=N_OBS_WINDOW,
     act_window_size=N_ACT_WINDOW
 ).to(DEVICE)
@@ -235,15 +188,16 @@ loss_arr = []
 # ─────────────── DataLoader & Training Loop ───────────────
 if __name__ == '__main__':
     train_ds = UR3SequenceDataset(DATA_DIR, N_OBS_WINDOW, N_ACT_WINDOW)
+    print("Total training windows:", len(train_ds))
     
     train_loader = DataLoader(
         train_ds,
         batch_size=BATCH_SIZE,
         shuffle=True,
         drop_last=True,
-        num_workers=4
+        num_workers=2
     )
-    with open(f"data/loss_convergence.csv", "w", newline="", encoding="utf-8") as csvfile:
+    with open(f"data/button/more_data_loss_convergence.csv", "w", newline="", encoding="utf-8") as csvfile:
         fieldnames =  ["Epoch", "Loss"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -270,6 +224,11 @@ if __name__ == '__main__':
                 path = os.path.join(SAVE_DIR, f"agent_epoch{epoch:03d}.pt")
                 torch.save(agent.state_dict(), path)
                 print(f"--> Saved agent checkpoint: {path}")
+
+            if avg < 0.02:
+                break
+    
+        
         # print(loss_arr)
         torch.save(agent.state_dict(), os.path.join(SAVE_DIR, "agent_final.pt"))
         
