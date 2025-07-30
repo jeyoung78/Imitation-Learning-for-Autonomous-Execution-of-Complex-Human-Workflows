@@ -24,7 +24,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Data paths
 DATA_DIR = "./data/button"
 VQVAE_CHECKPOINT = "./checkpoints_pybullet/buttons/more_more_data/vqvae/vqvae_epoch200.pt"
-SAVE_DIR = "./checkpoints_pybullet/buttons/more_more_data/transformer"
+SAVE_DIR = "./checkpoints_pybullet/buttons/more_data/transformer"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # VQ-VAE parameters (must match pretraining)
@@ -36,7 +36,7 @@ N_ACT_WINDOW       = 1          # predict 1 step ahead
 OBS_DIM            = 31          # ← match your data_obs.npy’s last dim :contentReference[oaicite:1]{index=1}
 
 # Transformer & training hyperparameters
-TRANSFORMER_LR = 3e-4
+TRANSFORMER_LR = 1e-4
 BATCH_SIZE     = 4096             # adjust to your dataset size
 EPOCHS         = 2000
 GRAD_CLIP      = 1.0
@@ -47,12 +47,12 @@ N_LATENT_DIMS  = 512
 VQVAE_N_EMBED  = 32
 VQVAE_GROUPS   = 2
 # smaller model size
-# GPT_EMB_DIM    = 128
-# GPT_N_LAYER    = 6
-# GPT_N_HEAD     = 8
-GPT_EMB_DIM    = 256
-GPT_N_LAYER    = 12
+GPT_EMB_DIM    = 128
+GPT_N_LAYER    = 6
 GPT_N_HEAD     = 8
+# GPT_EMB_DIM    = 256
+# GPT_N_LAYER    = 12
+# GPT_N_HEAD     = 8
 GPT_BLOCK_SIZE = N_OBS_WINDOW
 
 def seed_everything(seed:int):

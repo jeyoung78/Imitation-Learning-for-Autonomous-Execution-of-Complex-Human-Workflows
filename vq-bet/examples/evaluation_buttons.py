@@ -1,5 +1,3 @@
-
-
 import os
 import argparse
 import time
@@ -51,7 +49,7 @@ agent = BehaviorTransformer(
 
 mult = 2
 # 3. Load your trained Transformer checkpoint0
-checkpoint = torch.load("./checkpoints_pybullet/buttons/more_more_data/transformer/agent_epoch600.pt", map_location=DEVICE)
+checkpoint = torch.load("./checkpoints_pybullet/buttons/more_more_data/transformer/agent_epoch1600.pt", map_location=DEVICE)
 agent.load_state_dict(checkpoint)
 agent.eval()
 
@@ -289,7 +287,7 @@ if __name__=='__main__':
         obs_window = torch.from_numpy(obs).to(DEVICE)
         obs_window = obs_window.unsqueeze(0).unsqueeze(1)
         # print(obs_window.shape)
-        # print(obs_window)
+        print(obs_window)
         with torch.no_grad():
             # The agent forward signature is (obs, goal, act); pass act=None for prediction
             predicted_continuous, loss, metrics = agent(obs_window, None, None)
